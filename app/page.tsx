@@ -10,7 +10,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { TrendingUp, Users, Calendar, Target, Sparkles, Instagram, Facebook, Linkedin, Twitter, Youtube } from 'lucide-react';
 import { useEffect } from "react";
 import { useRef } from "react";
-import { downloadHtmlAsPdf } from "@/lib/htmlToPdf";
 
 
 interface InstagramMetrics {
@@ -598,18 +597,21 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
     </div>
 
     <div className="flex justify-center mt-6">
-      <Button
-        onClick={() => {
-          if (!reportRef.current) return;
-          downloadHtmlAsPdf(
-            reportRef.current,
-            `omada-ai-report-${result?.instagram.handle}.pdf`
-          );
-        }}
-        className="bg-gray-900 text-white hover:bg-gray-800"
-      >
-        Download Full Report
-      </Button>
+    <Button
+  onClick={async () => {
+    if (!reportRef.current) return;
+
+    const { downloadHtmlAsPdf } = await import("@/lib/htmlToPdf");
+
+    downloadHtmlAsPdf(
+      reportRef.current,
+      `omada-ai-report-${result?.instagram.handle}.pdf`
+    );
+  }}
+>
+  Download Full Report
+</Button>
+
     </div>
   </>
 )}
