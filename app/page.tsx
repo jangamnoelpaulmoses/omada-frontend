@@ -10,6 +10,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { TrendingUp, Users, Calendar, Target, Sparkles, Instagram, Facebook, Linkedin, Twitter, Youtube } from 'lucide-react';
 import { useEffect } from "react";
 import { useRef } from "react";
+import Navbar from '@/components/layout/Navbar';
+import Footer from '@/components/layout/Footer';
+import Image from 'next/image';
+
+
 
 
 interface InstagramMetrics {
@@ -52,6 +57,25 @@ const socialPlatforms: { key: SocialPlatform; label: string; icon: React.Compone
   { key: 'youtube', label: 'YouTube', icon: Youtube, color: 'text-red-600' },
 ];
 
+const fetchWithTimeout = async (
+  url: string,
+  options: RequestInit,
+  timeoutMs: number
+) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(id);
+  }
+};
+
 export default function Home() {
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [error, setError] = useState('');
@@ -61,9 +85,20 @@ export default function Home() {
   const [report, setReport] = useState<string | null>(null);
   type LoadingPhase = null | "discover" | "grade" | "report";
 const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>(null);
+const gradeLoaderRef = useRef<HTMLDivElement>(null);
+
+
+const SUPPORTED_GRADING_PLATFORMS: SocialPlatform[] = ["instagram"];
+const hasSupportedSocialReady =
+  socials &&
+  SUPPORTED_GRADING_PLATFORMS.some(
+    (platform) => socials[platform]?.length > 0
+  );
+
+
 const LOADING_MESSAGES_BY_PHASE: Record<Exclude<LoadingPhase, null>, string[]> = {
   discover: [
-    "Scanning website for social links…",
+    `Scanning ${websiteUrl} for social links…`,
     "Analyzing page metadata…",
     "Extracting social profiles…",
     "Verifying discovered links…"
@@ -107,6 +142,14 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
     return () => clearInterval(interval);
   }, [loadingPhase]);
   
+  useEffect(() => {
+    if (loadingPhase === "grade" && gradeLoaderRef.current) {
+      gradeLoaderRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, [loadingPhase]);
   
 
 
@@ -142,34 +185,90 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
   
 
   const handleGradeProfile = async (platform: SocialPlatform) => {
+    if (!SUPPORTED_GRADING_PLATFORMS.includes(platform)) {
+      setError(`${platform} is coming soon. Please use Instagram`);
+      return;
+    }
+  
     setLoadingPhase("grade");
     setError("");
     setResult(null);
     setSelectedPlatform(platform);
   
     try {
-      const url =
-        socials && socials[platform]?.length
-          ? socials[platform][0]
-          : `https://www.${platform}.com/${socialUsername}`;
+      let url: string;
+
+          if (socials && socials[platform]?.length) {
+            url = socials[platform][0];
+          } else {
+            const normalizedUsername = normalizeInstagramUsername(socialUsername);
+            url = `https://www.instagram.com/${normalizedUsername}`;
+          }
+
   
-      const response = await fetch(`${API_BASE_URL}/grade`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: url }),
-      });
+      const response = await fetchWithTimeout(
+        `${API_BASE_URL}/grade`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input: url }),
+        },
+        40_000 // 15 seconds
+      );
   
-      if (!response.ok) throw new Error();
+      if (!response.ok) {
+        throw new Error("SERVER_ERROR");
+      }
   
       const data = await response.json();
       setResult(data);
-    } catch {
-      setError("Failed to grade profile. Please try again.");
+  
+    } catch (err: any) {
+      if (err.message === "INVALID_INSTAGRAM_USERNAME") {
+        setError("Please enter a valid Instagram username.");
+      }
+      if (err.name === "AbortError") {
+        setError(
+          "Taking longer than expected. Please ensure the username is public and try again."
+        );
+      } else {
+        setError("Please check the username and try again.");
+      }
     } finally {
       setLoadingPhase(null);
     }
   };
   
+  const normalizeInstagramUsername = (input: string) => {
+    let value = input.trim();
+  
+    // Remove leading @
+    if (value.startsWith("@")) {
+      value = value.slice(1);
+    }
+  
+    // If user pasted full URL, extract username
+    try {
+      if (value.includes("instagram.com")) {
+        const url = new URL(
+          value.startsWith("http") ? value : `https://${value}`
+        );
+  
+        // pathname like "/username/" → ["", "username"]
+        const parts = url.pathname.split("/").filter(Boolean);
+        value = parts[0] || "";
+      }
+    } catch {
+      // ignore URL parsing errors
+    }
+  
+    // Final validation (Instagram usernames: letters, numbers, periods, underscores)
+    if (!/^[a-zA-Z0-9._]{1,30}$/.test(value)) {
+      throw new Error("INVALID_INSTAGRAM_USERNAME");
+    }
+  
+    return value;
+  };
   
   const normalizeWebsiteUrl = (input: string) => {
     let value = input.trim();
@@ -214,46 +313,34 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
   };
 
   return (
-    <div className="min-h-screen bg-white">
-      <nav className="border-b border-gray-100">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-300 to-blue-200 flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-gray-700" />
-            </div>
-            <span className="text-xl font-semibold text-gray-900">Omada</span>
-          </div>
-          <div className="flex items-center space-x-8">
-            <a href="#features" className="text-gray-600 hover:text-gray-900 transition">Features</a>
-            <a href="#pricing" className="text-gray-600 hover:text-gray-900 transition">Pricing</a>
-            <Button variant="ghost" className="text-gray-600">Login</Button>
-            <Button className="bg-gradient-to-r from-green-200 to-blue-200 text-gray-900 hover:from-green-300 hover:to-blue-300">
-              Try for Free
-            </Button>
-          </div>
-        </div>
-      </nav>
+    <div className="min-h-screen bg-white flex flex-col">
+      <Navbar />
 
-      <main className="max-w-7xl mx-auto px-6 py-20">
+      <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-12 sm:py-16 lg:py-20">
         <div className="max-w-3xl mx-auto text-center mb-16">
-          <div className="inline-block mb-6">
-            <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-green-200 to-blue-200 flex items-center justify-center shadow-lg">
-              <Sparkles className="w-10 h-10 text-gray-700" />
-            </div>
-          </div>
+        <div className="inline-block mb-6">
+      <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl sm:rounded-3xl flex items-center justify-center">
+        <Image
+          src="/icon.png"
+          alt="Omada logo"
+          width={48}
+          height={48}
+          className="w-auto h-auto  rounded-md"
+          priority
+        />
+      </div>
+    </div>
 
-          <h1 className="text-5xl font-bold text-gray-900 mb-4">
-            The Marketing Assistant.
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-semibold text-gray-900 mb-4">
+          The AI Marketing Team for Small Businesses
           </h1>
 
-          <p className="text-xl text-gray-500 mb-2">
-            Your growth partner that thinks, acts, and keeps you in the loop.
+          <p className="text-base sm:text-lg lg:text-xl text-gray-500 mb-2">
+          A do-it-for-me service for small businesses who don’t want to stay small
           </p>
 
-          <p className="text-gray-400 max-w-2xl mx-auto mb-12">
-            Your Marketing Assistant keeps your marketing on track — it monitors performance,
-            optimizes strategies, creates content, and analyzes feedback to uncover new opportunities.
-            It's also bilingual, supporting English and Spanish.
+          <p className="text-sm sm:text-base text-gray-400 max-w-2xl mx-auto mb-8 sm:mb-12">
+          Instantly analyze your social media and get an AI growth report
           </p>
 
 <div className="bg-gradient-to-br from-gray-50 to-green-50 rounded-2xl p-8 shadow-sm border border-gray-100">
@@ -267,15 +354,15 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
         Connect your business—we do the rest.
       </p>
 
-      <form onSubmit={handleDiscoverSocials} className="flex gap-3 max-w-xl mx-auto">
+      <form onSubmit={handleDiscoverSocials} className="flex flex-col sm:flex-row gap-3 max-w-xl mx-auto">
         <Input
           type="text"
-          placeholder="Enter business website"
+          placeholder="Enter website URL (eg: omada.ai)"
           value={websiteUrl}
           onChange={(e) => setWebsiteUrl(e.target.value)}
           className="flex-1 h-12 text-base bg-white"
         />
-        <Button type="submit" className="h-12 px-6 bg-gray-900 text-white">
+        <Button type="submit" className="h-12 px-6 w-full sm:w-auto bg-gray-900 text-white">
           →
         </Button>
       </form>
@@ -321,36 +408,82 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 )}
 
 {entryMode === "social" && socials && hasSocials() && (
-  <div className="max-w-4xl mx-auto mt-10">
-    <h3 className="text-lg font-semibold text-gray-900 mb-4 text-center">
-      We found these social profiles
+  <div className="mx-auto text-center">
+    <h3 className="text-lg font-semibold text-gray-900 mb-4">
+      We found these social profiles for {websiteUrl}!
     </h3>
 
-    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-      {socialPlatforms.map(({ key, label, icon: Icon, color }) => {
-        const hasHandle = socials[key]?.length > 0;
-        return (
-          <button
-            key={key}
-            onClick={() => hasHandle && handleGradeProfile(key)}
-            disabled={!hasHandle}
-            className={`p-6 rounded-xl border-2 transition-all ${
-              hasHandle
-                ? "border-gray-200 hover:border-gray-400 hover:bg-gray-50"
-                : "border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed"
-            }`}
-          >
-            <Icon className={`w-8 h-8 mx-auto mb-2 ${color}`} />
-            <p className="font-semibold text-sm text-gray-900">{label}</p>
-            <p className="text-xs mt-1">
-              {hasHandle ? "Available" : "Not found"}
-            </p>
-          </button>
-        );
-      })}
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 w-fit mx-auto place-items-center mb-6">
+
+
+      {socialPlatforms
+        .filter(({ key }) => socials[key]?.length > 0)
+        .map(({ key, label, icon: Icon, color }) => {
+          const isSupported = SUPPORTED_GRADING_PLATFORMS.includes(key);
+
+          return (
+            <div
+              key={key}
+              className={`
+                p-4
+                w-full max-w-[160px] mx-auto
+                rounded-xl
+                border-2
+                relative
+                ${
+                  isSupported
+                    ? "border-green-200 bg-green-50"
+                    : "border-gray-100 bg-gray-50 opacity-60"
+                }
+              `}
+            >
+              <Icon className={`w-7 h-7 mx-auto mb-2 ${color}`} />
+
+         
+
+              <p className="font-semibold text-sm text-gray-900">{label}</p>
+              <p className="text-xs mt-1 text-gray-600">
+                {isSupported ? "Ready" : "Coming Soon"}
+              </p>
+            </div>
+          );
+        })}
     </div>
+
+    {/* CTA BUTTON */}
+    {hasSupportedSocialReady ? (
+  <Button
+    onClick={() => handleGradeProfile("instagram")}
+    className="w-full sm:w-auto px-6 sm:px-8 py-3 text-sm sm:text-base font-semibold bg-gray-900 text-white hover:bg-gray-800"
+  >
+    Generate Report
+  </Button>
+) : (
+  <div className="max-w-xl mx-auto mt-4">
+    <p className="text-sm text-gray-600 mb-4">
+      We found social profiles, but none are supported for analysis yet.
+      Currently, only Instagram reports are available.
+    </p>
+
+    <Button
+      variant="outline"
+      className="border-gray-300"
+      onClick={() => {
+        setSocials(null);
+        setSocialUsername("");
+      }}
+    >
+      Enter Instagram Username Manually
+    </Button>
+
+  </div>
+  
+)}
+
   </div>
 )}
+
+
 
 
 
@@ -366,10 +499,10 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
       {/* PLATFORM TOGGLE */}
       <div className="flex justify-center mb-6">
-        <div className="inline-flex rounded-full border bg-white overflow-hidden">
+      <div className="inline-flex flex-wrap sm:flex-nowrap rounded-full border bg-white overflow-hidden">
           <button
             onClick={() => setSocialPlatform("instagram")}
-            className={`px-6 py-2 flex items-center gap-2 ${
+            className={`px-4 sm:px-6 py-2 flex items-center gap-2 text-sm sm:text-base ${
               socialPlatform === "instagram"
                 ? "bg-gray-900 text-white"
                 : "text-gray-600"
@@ -412,10 +545,24 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
           →
         </Button>
       </form>
+      {/* ERROR MESSAGE (MANUAL INSTAGRAM FLOW) */}
+{error && !loadingPhase && (
+  <Card className="max-w-xl mx-auto mt-4 border border-red-200 bg-red-50">
+    <CardContent className="p-4 text-center">
+      <p className="text-sm text-red-700 font-medium">
+        {error}
+      </p>
+    </CardContent>
+  </Card>
+)}
+
 
       <button
         type="button"
-        onClick={() => setEntryMode("website")}
+        onClick={() =>{ setEntryMode("website")
+          setError("");      
+        }
+        }
         className="mt-6 text-sm text-gray-700 underline hover:text-gray-900"
       >
         ← Back to website
@@ -425,21 +572,24 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 </div>
 
         </div>
-        <p className="text-sm text-gray-500 mb-3 text-center">
+        {/* <p className="text-sm text-gray-500 mb-3 text-center">
   Analysis for <span className="font-medium text-gray-700">{websiteUrl}</span>
-</p>
+</p> */}
 {loadingPhase === "grade" && (
-  <Card className="max-w-3xl mx-auto mt-12 border border-gray-200">
-    <CardContent className="p-8">
-      <div className="flex items-center gap-4">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-200 to-blue-200 animate-pulse" />
-        <p className="text-sm text-gray-600">
-          {LOADING_MESSAGES_BY_PHASE.grade[loadingMessageIndex]}
-        </p>
-      </div>
-    </CardContent>
-  </Card>
+  <div ref={gradeLoaderRef}>
+    <Card className="max-w-3xl mx-auto mt-12 border border-gray-200">
+      <CardContent className="p-8">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-200 to-blue-200 animate-pulse" />
+          <p className="text-sm text-gray-600">
+            {LOADING_MESSAGES_BY_PHASE.grade[loadingMessageIndex]}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  </div>
 )}
+
 
 
 
@@ -449,7 +599,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
             <Card className="bg-gradient-to-br from-gray-900 to-green-900 text-white border-none shadow-2xl">
 
               <CardContent className="p-8">
-                <div className="flex items-center justify-between mb-8">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 mb-8">
                   <div>
                     <p className="text-green-200 text-sm font-medium mb-1">
                       {selectedPlatform.toUpperCase()} PROFILE
@@ -459,7 +609,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
                   <div className="text-right">
                     <p className="text-green-200 text-sm font-medium mb-1">OVERALL GRADE</p>
                     <div className="flex items-baseline gap-2">
-                      <span className={`text-6xl font-bold ${getGradeColor(result.instagram.grade)}`}>
+                    <span className={`text-4xl sm:text-5xl lg:text-6xl font-bold ${getGradeColor(result.instagram.grade)}`}>
                         {result.instagram.grade}
                       </span>
                       <span className="text-3xl text-gray-300">
@@ -469,13 +619,14 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-6 mb-8">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 sm:gap-6 mb-8">
                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-2">
                       <Calendar className="w-4 h-4 text-green-300" />
                       <p className="text-xs text-green-200 font-medium">POSTS (30d)</p>
                     </div>
-                    <p className="text-2xl font-bold">{result.instagram.metrics.posts_last_30_days}</p>
+                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+                      {result.instagram.metrics.posts_last_30_days}</p>
                   </div>
 
                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
@@ -483,7 +634,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
                       <TrendingUp className="w-4 h-4 text-green-300" />
                       <p className="text-xs text-green-200 font-medium">AVG/WEEK</p>
                     </div>
-                    <p className="text-2xl font-bold">{result.instagram.metrics.avg_posts_per_week}x</p>
+                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+                      {result.instagram.metrics.avg_posts_per_week}x</p>
                   </div>
 
                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
@@ -491,7 +643,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
                       <Target className="w-4 h-4 text-green-300" />
                       <p className="text-xs text-green-200 font-medium">LAST POST</p>
                     </div>
-                    <p className="text-2xl font-bold">{result.instagram.metrics.days_since_last_post}d</p>
+                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+                      {result.instagram.metrics.days_since_last_post}d</p>
                   </div>
 
                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
@@ -499,7 +652,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
                       <Users className="w-4 h-4 text-green-300" />
                       <p className="text-xs text-green-200 font-medium">FOLLOWERS</p>
                     </div>
-                    <p className="text-2xl font-bold">{result.instagram.metrics.followers.toLocaleString()}</p>
+                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+                      {result.instagram.metrics.followers.toLocaleString()}</p>
                   </div>
 
                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
@@ -507,7 +661,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
                       <Sparkles className="w-4 h-4 text-green-300" />
                       <p className="text-xs text-green-200 font-medium">ENGAGEMENT</p>
                     </div>
-                    <p className="text-2xl font-bold">{result.instagram.metrics.engagement_rate.toFixed(1)}%</p>
+                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+                      {result.instagram.metrics.engagement_rate.toFixed(1)}%</p>
                   </div>
                 </div>
 
@@ -587,7 +742,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
             Strategic analysis based on current performance and engagement patterns.
           </p>
 
-          <div className="space-y-4 text-gray-700 leading-relaxed whitespace-pre-line">
+          <div className="space-y-4 text-sm sm:text-base text-gray-700 leading-relaxed whitespace-pre-line">
             {report.split(". ").map((line, i) => (
               <p key={i}>{line.trim()}.</p>
             ))}
@@ -620,27 +775,27 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
             <div className="text-center mt-8">
             <Button
-  variant="outline"
-  className="border-gray-300"
-  onClick={() => {
-    // Clear results
-    setResult(null);
-    setSelectedPlatform(null);
-    setReport(null);
-    setError("");
-    setLoadingPhase(null);
+                variant="outline"
+                className="border-gray-300"
+                onClick={() => {
+                  // Clear results
+                  setResult(null);
+                  setSelectedPlatform(null);
+                  setReport(null);
+                  setError("");
+                  setLoadingPhase(null);
 
-    // Reset inputs
-    setSocials(null);
-    setWebsiteUrl("");
-    setSocialUsername("");
+                  // Reset inputs
+                  setSocials(null);
+                  setWebsiteUrl("");
+                  setSocialUsername("");
 
-    // Go back to start
-    setEntryMode("website");
-  }}
->
-  Grade Another Platform
-</Button>
+                  // Go back to start
+                  setEntryMode("website");
+                }}
+              >
+                Grade Another Website
+              </Button>
 
 
 
@@ -650,11 +805,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
         
       </main>
 
-      <footer className="border-t border-gray-100 mt-20">
-        <div className="max-w-7xl mx-auto px-6 py-12 text-center text-gray-500 text-sm">
-          <p>&copy; 2024 Omada. Your growth partner for social media success.</p>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }
@@ -852,7 +1003,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 //                       <Calendar className="w-4 h-4 text-green-300" />
 //                       <p className="text-xs text-green-200 font-medium">POSTS (30d)</p>
 //                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.posts_last_30_days}</p>
+//                     <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+//                      {result.instagram.metrics.posts_last_30_days}</p>
 //                   </div>
 
 //                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
@@ -860,7 +1012,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 //                       <TrendingUp className="w-4 h-4 text-green-300" />
 //                       <p className="text-xs text-green-200 font-medium">AVG/WEEK</p>
 //                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.avg_posts_per_week}x</p>
+//                     <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+//                     {result.instagram.metrics.avg_posts_per_week}x</p>
 //                   </div>
 
 //                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
@@ -868,7 +1021,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 //                       <Target className="w-4 h-4 text-green-300" />
 //                       <p className="text-xs text-green-200 font-medium">LAST POST</p>
 //                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.days_since_last_post}d</p>
+//                     <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+//                      {result.instagram.metrics.days_since_last_post}d</p>
 //                   </div>
 
 //                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
@@ -876,7 +1030,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 //                       <Users className="w-4 h-4 text-green-300" />
 //                       <p className="text-xs text-green-200 font-medium">FOLLOWERS</p>
 //                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.followers.toLocaleString()}</p>
+//                     <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+//                      {result.instagram.metrics.followers.toLocaleString()}</p>
 //                   </div>
 
 //                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
@@ -884,7 +1039,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 //                       <Sparkles className="w-4 h-4 text-green-300" />
 //                       <p className="text-xs text-green-200 font-medium">ENGAGEMENT</p>
 //                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.engagement_rate.toFixed(1)}%</p>
+//                     <p className="text-lg sm:text-xl lg:text-2xl font-bold">
+//                     {result.instagram.metrics.engagement_rate.toFixed(1)}%</p>
 //                   </div>
 //                 </div>
 
@@ -927,351 +1083,6 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 //     </div>
 //   );
 // }
-
-
-
-
-
-
-
-
-
-
-
-// // with posts
-// 'use client';
-
-// import { useState } from 'react';
-// import { Button } from '@/components/ui/button';
-// import { Input } from '@/components/ui/input';
-// import { Card, CardContent } from '@/components/ui/card';
-// import { TrendingUp, Users, Calendar, Target, Sparkles } from 'lucide-react';
-
-// interface InstagramMetrics {
-//   posts_last_30_days: number;
-//   avg_posts_per_week: number;
-//   days_since_last_post: number;
-//   followers: number;
-//   engagement_rate: number;
-// }
-
-// interface GradeResponse {
-//   instagram: {
-//     handle: string;
-//     metrics: InstagramMetrics;
-//     grade: string;
-//     score: number;
-//     urgency: string[];
-//   };
-// }
-// interface LatestPost {
-//   url: string;
-//   media_type: string;
-//   thumbnail?: string;
-// }
-
-// interface LatestPostsResponse {
-//   posts: LatestPost[];
-// }
-
-
-// export default function Home() {
-//   const [username, setUsername] = useState('');
-//   const [loading, setLoading] = useState(false);
-//   const [result, setResult] = useState<GradeResponse | null>(null);
-//   const [error, setError] = useState('');
-//   const [latestPosts, setLatestPosts] = useState<LatestPost[]>([]);
-//   const [loadingPosts, setLoadingPosts] = useState(false);
-  
-//   const handleSubmit = async (e: React.FormEvent) => {
-//     e.preventDefault();
-//     setLoading(true);
-//     setLoadingPosts(true);
-//     setError('');
-//     setResult(null);
-//     setLatestPosts([]);
-  
-//     try {
-//       const cleanUsername = username
-//         .replace('@', '')
-//         .replace('https://www.instagram.com/', '')
-//         .replace('/', '');
-  
-//       const payload = {
-//         input: `https://www.instagram.com/${cleanUsername}/`,
-//       };
-  
-//       // 🚀 CALL BOTH APIS IN PARALLEL
-//       const [latestRes, gradeRes] = await Promise.allSettled([
-//         fetch('http://localhost:4000/latest-posts', {
-//           method: 'POST',
-//           headers: { 'Content-Type': 'application/json' },
-//           body: JSON.stringify(payload),
-//         }),
-//         fetch('http://localhost:4000/grade', {
-//           method: 'POST',
-//           headers: { 'Content-Type': 'application/json' },
-//           body: JSON.stringify(payload),
-//         }),
-//       ]);
-  
-//       // FAST VISUALS
-//       if (latestRes.status === 'fulfilled' && latestRes.value.ok) {
-//         const latestData: LatestPostsResponse = await latestRes.value.json();
-//         setLatestPosts(latestData.posts || []);
-//       }
-  
-//       // SLOW ANALYTICS
-//       if (gradeRes.status === 'fulfilled' && gradeRes.value.ok) {
-//         const gradeData = await gradeRes.value.json();
-//         setResult(gradeData);
-//       } else {
-//         throw new Error('Failed to fetch grade');
-//       }
-//     } catch (err) {
-//       setError('Failed to grade profile. Please check the username and try again.');
-//     } finally {
-//       setLoading(false);
-//       setLoadingPosts(false);
-//     }
-//   };
-  
-
-//   const getGradeColor = (grade: string) => {
-//     switch (grade) {
-//       case 'A':
-//         return 'text-green-600';
-//       case 'B':
-//         return 'text-lime-600';
-//       case 'C':
-//         return 'text-yellow-600';
-//       case 'D':
-//         return 'text-orange-600';
-//       default:
-//         return 'text-red-600';
-//     }
-//   };
-
-//   return (
-//     <div className="min-h-screen bg-white">
-//       <nav className="border-b border-gray-100">
-//         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-//           <div className="flex items-center space-x-2">
-//             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-300 to-blue-200 flex items-center justify-center">
-//               <Sparkles className="w-5 h-5 text-gray-700" />
-//             </div>
-//             <span className="text-xl font-semibold text-gray-900">Omada</span>
-//           </div>
-//           <div className="flex items-center space-x-8">
-//             <a href="#features" className="text-gray-600 hover:text-gray-900 transition">Features</a>
-//             <a href="#pricing" className="text-gray-600 hover:text-gray-900 transition">Pricing</a>
-//             <Button variant="ghost" className="text-gray-600">Login</Button>
-//             <Button className="bg-gradient-to-r from-green-200 to-blue-200 text-gray-900 hover:from-green-300 hover:to-blue-300">
-//               Try for Free
-//             </Button>
-//           </div>
-//         </div>
-//       </nav>
-
-//       <main className="max-w-7xl mx-auto px-6 py-20">
-//         <div className="max-w-3xl mx-auto text-center mb-16">
-//           <div className="inline-block mb-6">
-//             <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-green-200 to-blue-200 flex items-center justify-center shadow-lg">
-//               <Sparkles className="w-10 h-10 text-gray-700" />
-//             </div>
-//           </div>
-
-//           <h1 className="text-5xl font-bold text-gray-900 mb-4">
-//             The Marketing Assistant.
-//           </h1>
-
-//           <p className="text-xl text-gray-500 mb-2">
-//             Your growth partner that thinks, acts, and keeps you in the loop.
-//           </p>
-
-//           <p className="text-gray-400 max-w-2xl mx-auto mb-12">
-//             Your Marketing Assistant keeps your marketing on track — it monitors performance,
-//             optimizes strategies, creates content, and analyzes feedback to uncover new opportunities.
-//             It's also bilingual, supporting English and Spanish.
-//           </p>
-//           <img
-//         src="https://instagram.fphl1-1.fna.fbcdn.net/v/t51.2885-15/570053006_17842703232603734_3482022406384471385_n.jpg?stp=dst-jpg_e15_fr_p1080x1080_tt6&_nc_ht=instagram.fphl1-1.fna.fbcdn.net&_nc_cat=102&_nc_oc=Q6cZ2QF8L3Qg8gXLct56luciauz9hVKz7IHDoK98dvU2RRzegYS5f8V0WvTZcnWoE9XIB_s&_nc_ohc=axV0uuj01JEQ7kNvwHjOcbw&_nc_gid=zGws6jHeOlMRrK7duhqioQ&edm=ANTKIIoBAAAA&ccb=7-5&oh=00_AflZD7BhT3Ru4WA6RMUx0gw9R09g69QTRKohBxfdUB717w&oe=694B166E&_nc_sid=d885a2"
-//         alt="Instagram CDN test"
-//         width={400}
-//         style={{ border: '2px solid red', display: 'block' }}
-//       />
-
-//           <div className="bg-gradient-to-br from-gray-50 to-green-50 rounded-2xl p-8 shadow-sm border border-gray-100">
-//             <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-//               Grade Your Instagram Profile
-//             </h2>
-//             <p className="text-gray-600 mb-6">
-//               Get instant insights and actionable recommendations for your social media presence.
-//             </p>
-
-//             <form onSubmit={handleSubmit} className="flex gap-3 max-w-xl mx-auto">
-//               <Input
-//                 type="text"
-//                 placeholder="Enter Instagram username (e.g., @hirehack.ai)"
-//                 value={username}
-//                 onChange={(e) => setUsername(e.target.value)}
-//                 className="flex-1 h-12 text-base bg-white"
-//                 disabled={loading}
-//               />
-//               <Button
-//                 type="submit"
-//                 disabled={loading || !username}
-//                 className="h-12 px-8 bg-gray-900 text-white hover:bg-gray-800"
-//               >
-//                 {loading ? 'Analyzing...' : 'Grade Profile'}
-//               </Button>
-//             </form>
-
-//             {error && (
-//               <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-lg text-sm">
-//                 {error}
-//               </div>
-//             )}
-//           </div>
-//         </div>
-//         {latestPosts.length > 0 && (
-//   <div className="max-w-4xl mx-auto mb-10 animate-in fade-in slide-in-from-bottom-3 duration-300">
-//     <p className="text-sm text-gray-500 mb-3 text-center">
-//       Latest Instagram posts
-//     </p>
-
-//     <div className="grid grid-cols-2 gap-4">
-//       {latestPosts.map((post, idx) => (
-//         <a
-//           key={idx}
-//           href={post.url}
-//           target="_blank"
-//           rel="noopener noreferrer"
-//           className="relative group rounded-xl overflow-hidden border border-gray-200"
-//         >
-//           <img
-//             src={post.thumbnail || '/placeholder.png'}
-//             alt="Instagram post"
-//             className="w-full h-64 object-cover group-hover:scale-105 transition-transform duration-300"
-//           />
-
-//           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
-//             <span className="text-white text-sm font-medium capitalize">
-//               {post.media_type}
-//             </span>
-//           </div>
-//         </a>
-//       ))}
-//     </div>
-//   </div>
-// )}
-
-//         {result && (
-//           <div className="max-w-4xl mx-auto mt-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-//             <Card className="bg-gradient-to-br from-gray-900 to-green-900 text-white border-none shadow-2xl">
-//               <CardContent className="p-8">
-//                 <div className="flex items-center justify-between mb-8">
-//                   <div>
-//                     <p className="text-green-200 text-sm font-medium mb-1">INSTAGRAM PROFILE</p>
-//                     <h3 className="text-3xl font-bold">@{result.instagram.handle}</h3>
-//                   </div>
-//                   <div className="text-right">
-//                     <p className="text-green-200 text-sm font-medium mb-1">OVERALL GRADE</p>
-//                     <div className="flex items-baseline gap-2">
-//                       <span className={`text-6xl font-bold ${getGradeColor(result.instagram.grade)}`}>
-//                         {result.instagram.grade}
-//                       </span>
-//                       <span className="text-3xl text-gray-300">
-//                         {result.instagram.score}/100
-//                       </span>
-//                     </div>
-//                   </div>
-//                 </div>
-
-//                 <div className="grid grid-cols-2 md:grid-cols-5 gap-6 mb-8">
-//                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-//                     <div className="flex items-center gap-2 mb-2">
-//                       <Calendar className="w-4 h-4 text-green-300" />
-//                       <p className="text-xs text-green-200 font-medium">POSTS (30d)</p>
-//                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.posts_last_30_days}</p>
-//                   </div>
-
-//                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-//                     <div className="flex items-center gap-2 mb-2">
-//                       <TrendingUp className="w-4 h-4 text-green-300" />
-//                       <p className="text-xs text-green-200 font-medium">AVG/WEEK</p>
-//                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.avg_posts_per_week}x</p>
-//                   </div>
-
-//                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-//                     <div className="flex items-center gap-2 mb-2">
-//                       <Target className="w-4 h-4 text-green-300" />
-//                       <p className="text-xs text-green-200 font-medium">LAST POST</p>
-//                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.days_since_last_post}d</p>
-//                   </div>
-
-//                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-//                     <div className="flex items-center gap-2 mb-2">
-//                       <Users className="w-4 h-4 text-green-300" />
-//                       <p className="text-xs text-green-200 font-medium">FOLLOWERS</p>
-//                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.followers.toLocaleString()}</p>
-//                   </div>
-
-//                   <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-//                     <div className="flex items-center gap-2 mb-2">
-//                       <Sparkles className="w-4 h-4 text-green-300" />
-//                       <p className="text-xs text-green-200 font-medium">ENGAGEMENT</p>
-//                     </div>
-//                     <p className="text-2xl font-bold">{result.instagram.metrics.engagement_rate.toFixed(1)}%</p>
-//                   </div>
-//                 </div>
-
-//                 {result.instagram.urgency && result.instagram.urgency.length > 0 && (
-//                   <div className="bg-yellow-500/20 backdrop-blur rounded-xl p-6 border border-yellow-500/30">
-//                     <p className="text-yellow-200 text-sm font-medium mb-3">RECOMMENDATIONS</p>
-//                     <div className="space-y-2">
-//                       {result.instagram.urgency.map((item, index) => (
-//                         <p key={index} className="text-white text-base">
-//                           {item}
-//                         </p>
-//                       ))}
-//                     </div>
-//                   </div>
-//                 )}
-//               </CardContent>
-//             </Card>
-
-//             <div className="text-center mt-8">
-//               <Button
-//                 onClick={() => {
-//                   setResult(null);
-//                   setUsername('');
-//                 }}
-//                 variant="outline"
-//                 className="border-gray-300"
-//               >
-//                 Grade Another Profile
-//               </Button>
-//             </div>
-//           </div>
-//         )}
-//       </main>
-
-//       <footer className="border-t border-gray-100 mt-20">
-//         <div className="max-w-7xl mx-auto px-6 py-12 text-center text-gray-500 text-sm">
-//           <p>&copy; 2024 Omada. Your growth partner for social media success.</p>
-//         </div>
-//       </footer>
-//     </div>
-//   );
-// }
-
-
-
 
 
 
