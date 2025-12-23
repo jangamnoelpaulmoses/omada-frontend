@@ -156,18 +156,28 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
   const handleDiscoverSocials = async (e: React.FormEvent) => {
     e.preventDefault();
   
-    setLoadingPhase("discover");
     setError("");
     setSocials(null);
     setResult(null);
     setSelectedPlatform(null);
   
+    let normalizedWebsite: string;
+  
     try {
-      const response = await fetch( `${API_BASE_URL}/discover-socials`, {
+      normalizedWebsite = normalizeWebsiteUrl(websiteUrl);
+    } catch {
+      setError("Please enter a valid website (e.g. example.com)");
+      return;
+    }
+  
+    setLoadingPhase("discover");
+  
+    try {
+      const response = await fetch(`${API_BASE_URL}/discover-socials`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          website_url: normalizeWebsiteUrl(websiteUrl),
+          website_url: normalizedWebsite,
         }),
       });
   
@@ -182,6 +192,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       setLoadingPhase(null);
     }
   };
+  
   
 
   const handleGradeProfile = async (platform: SocialPlatform) => {
@@ -273,6 +284,11 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
   const normalizeWebsiteUrl = (input: string) => {
     let value = input.trim();
   
+    // Must contain at least one dot (.)
+    if (!value.includes(".")) {
+      throw new Error("INVALID_WEBSITE_FORMAT");
+    }
+  
     // Add scheme if missing
     if (!/^https?:\/\//i.test(value)) {
       value = `https://${value}`;
@@ -281,15 +297,19 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
     try {
       const url = new URL(value);
   
-      // Force https
-      url.protocol = "https:";
+      // Extra safety: hostname must contain dot
+      if (!url.hostname.includes(".")) {
+        throw new Error();
+      }
   
-      // Remove path, query, hash
+      // Force https & strip path/query/hash
+      url.protocol = "https:";
       return url.origin;
     } catch {
-      throw new Error("Invalid website URL");
+      throw new Error("INVALID_WEBSITE_FORMAT");
     }
   };
+  
   
   
   const getGradeColor = (grade: string) => {
@@ -339,7 +359,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
           A do-it-for-me service for small businesses who don’t want to stay small
           </p>
 
-          <p className="text-sm sm:text-base text-gray-400 max-w-2xl mx-auto mb-8 sm:mb-12">
+          <p className="hidden sm:block text-sm sm:text-base text-gray-400 max-w-2xl mx-auto mb-8 sm:mb-12">
           Instantly analyze your social media and get an AI growth report
           </p>
 
@@ -354,7 +374,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
         Connect your business—we do the rest.
       </p>
 
-      <form onSubmit={handleDiscoverSocials} className="flex flex-col sm:flex-row gap-3 max-w-xl mx-auto">
+      <form onSubmit={handleDiscoverSocials} className="flex  sm:flex-row gap-3 max-w-xl mx-auto">
         <Input
           type="text"
           placeholder="Enter website URL (eg: omada.ai)"
@@ -362,7 +382,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
           onChange={(e) => setWebsiteUrl(e.target.value)}
           className="flex-1 h-12 text-base bg-white"
         />
-        <Button type="submit" className="h-12 px-6 w-full sm:w-auto bg-gray-900 text-white">
+        <Button type="submit" className="h-12 px-6 bg-gray-900 text-white">
           →
         </Button>
       </form>
@@ -374,15 +394,34 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 )}
 
 
-      <button
-        type="button"
-        onClick={() => setEntryMode("social")}
-        className="mt-6 text-sm text-gray-700 underline hover:text-gray-900"
-      >
-        Don’t have a website? Connect your social media →
-      </button>
+<button
+  type="button"
+  onClick={() => {
+    setEntryMode("social");
+    setError("");
+  }}
+  className="mt-6 text-sm font-light text-gray-700 hover:text-gray-900 text-center"
+>
+  <span className="block">
+    Don’t have a website?
+  </span>
+  <span className="block underline font-medium font-semibold">
+    Connect your social media
+  </span>
+</button>
+
     </>
   )}
+  {error && entryMode === "website" && !loadingPhase && (
+  <Card className="max-w-xl mx-auto mt-4 border border-red-200 bg-red-50">
+    <CardContent className="p-4 text-center">
+      <p className="text-sm text-red-700 font-medium">
+        {error}
+      </p>
+    </CardContent>
+  </Card>
+)}
+
   {entryMode === "social" && socials && !hasSocials() && (
   <Card className="max-w-xl mx-auto mt-8 border border-yellow-200 bg-yellow-50">
     <CardContent className="p-6 text-center">
@@ -596,90 +635,129 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
         {result && selectedPlatform && (
           <div className="max-w-4xl mx-auto mt-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <Card className="bg-gradient-to-br from-gray-900 to-green-900 text-white border-none shadow-2xl">
+<Card className="bg-gradient-to-br from-gray-900 to-green-900 text-white border-none shadow-2xl">
+  <CardContent className="p-6 sm:p-8">
 
-              <CardContent className="p-8">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 mb-8">
-                  <div>
-                    <p className="text-green-200 text-sm font-medium mb-1">
-                      {selectedPlatform.toUpperCase()} PROFILE
-                    </p>
-                    <h3 className="text-3xl font-bold">@{result.instagram.handle}</h3>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-green-200 text-sm font-medium mb-1">OVERALL GRADE</p>
-                    <div className="flex items-baseline gap-2">
-                    <span className={`text-4xl sm:text-5xl lg:text-6xl font-bold ${getGradeColor(result.instagram.grade)}`}>
-                        {result.instagram.grade}
-                      </span>
-                      <span className="text-3xl text-gray-300">
-                        {result.instagram.score}/100
-                      </span>
-                    </div>
-                  </div>
-                </div>
+    {/* ===== HEADER (PROFILE + GRADE) ===== */}
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 mb-8 text-center sm:text-left">
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 sm:gap-6 mb-8">
-                  <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Calendar className="w-4 h-4 text-green-300" />
-                      <p className="text-xs text-green-200 font-medium">POSTS (30d)</p>
-                    </div>
-                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
-                      {result.instagram.metrics.posts_last_30_days}</p>
-                  </div>
+      {/* PROFILE INFO */}
+      <div>
+        <p className="text-green-200 text-sm font-medium mb-1">
+          {selectedPlatform.toUpperCase()} PROFILE
+        </p>
+        <h3 className="text-2xl sm:text-3xl font-bold break-all">
+          @{result.instagram.handle}
+        </h3>
+      </div>
 
-                  <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <TrendingUp className="w-4 h-4 text-green-300" />
-                      <p className="text-xs text-green-200 font-medium">AVG/WEEK</p>
-                    </div>
-                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
-                      {result.instagram.metrics.avg_posts_per_week}x</p>
-                  </div>
+      {/* GRADE INFO */}
+      <div className="flex flex-col items-center sm:items-end">
+        <p className="text-green-200 text-sm font-medium mb-1">
+          OVERALL GRADE
+        </p>
+        <div className="flex items-baseline gap-2">
+          <span
+            className={`text-4xl sm:text-5xl lg:text-6xl font-bold leading-none ${getGradeColor(
+              result.instagram.grade
+            )}`}
+          >
+            {result.instagram.grade}
+          </span>
+          <span className="text-lg sm:text-2xl text-gray-300 leading-none">
+            {result.instagram.score}/100
+          </span>
+        </div>
+      </div>
+    </div>
 
-                  <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Target className="w-4 h-4 text-green-300" />
-                      <p className="text-xs text-green-200 font-medium">LAST POST</p>
-                    </div>
-                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
-                      {result.instagram.metrics.days_since_last_post}d</p>
-                  </div>
+    {/* ===== METRICS GRID ===== */}
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-6 mb-8">
 
-                  <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Users className="w-4 h-4 text-green-300" />
-                      <p className="text-xs text-green-200 font-medium">FOLLOWERS</p>
-                    </div>
-                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
-                      {result.instagram.metrics.followers.toLocaleString()}</p>
-                  </div>
+      {/* POSTS */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Calendar className="w-4 h-4 text-green-300" />
+          <p className="text-xs text-green-200 font-medium">POSTS (30d)</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.instagram.metrics.posts_last_30_days}
+        </p>
+      </div>
 
-                  <div className="bg-white/10 backdrop-blur rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Sparkles className="w-4 h-4 text-green-300" />
-                      <p className="text-xs text-green-200 font-medium">ENGAGEMENT</p>
-                    </div>
-                    <p className="text-lg sm:text-xl lg:text-2xl font-bold">
-                      {result.instagram.metrics.engagement_rate.toFixed(1)}%</p>
-                  </div>
-                </div>
+      {/* AVG/WEEK */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <TrendingUp className="w-4 h-4 text-green-300" />
+          <p className="text-xs text-green-200 font-medium">AVG / WEEK</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.instagram.metrics.avg_posts_per_week}x
+        </p>
+      </div>
 
-                {result.instagram.urgency && result.instagram.urgency.length > 0 && (
-                  <div className="bg-yellow-500/20 backdrop-blur rounded-xl p-6 border border-yellow-500/30">
-                    <p className="text-yellow-200 text-sm font-medium mb-3">RECOMMENDATIONS</p>
-                    <div className="space-y-2">
-                      {result.instagram.urgency.map((item, index) => (
-                        <p key={index} className="text-white text-base">
-                          {item}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="mt-10 pt-6 border-t border-white/10 flex justify-center">
-                <div className="flex flex-col items-center gap-4">
+      {/* LAST POST */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Target className="w-4 h-4 text-green-300" />
+          <p className="text-xs text-green-200 font-medium">LAST POST</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.instagram.metrics.days_since_last_post}d
+        </p>
+      </div>
+
+      {/* FOLLOWERS */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Users className="w-4 h-4 text-green-300" />
+          <p className="text-xs text-green-200 font-medium">FOLLOWERS</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.instagram.metrics.followers.toLocaleString()}
+        </p>
+      </div>
+
+      {/* ENGAGEMENT */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Sparkles className="w-4 h-4 text-green-300" />
+          <p className="text-xs text-green-200 font-medium">ENGAGEMENT</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.instagram.metrics.engagement_rate.toFixed(1)}%
+        </p>
+      </div>
+    </div>
+
+    {/* ===== RECOMMENDATIONS ===== */}
+    {result.instagram.urgency?.length > 0 && (
+      <div className="bg-yellow-500/20 backdrop-blur rounded-xl p-6 border border-yellow-500/30 mb-6">
+        <p className="text-yellow-200 text-sm font-medium mb-3">
+          RECOMMENDATIONS
+        </p>
+        <div className="space-y-2">
+          {result.instagram.urgency.map((item, index) => (
+            <p key={index} className="text-white text-sm sm:text-base">
+              {item}
+            </p>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {/* ===== REPORT LOADING ===== */}
+    {loadingPhase === "report" && (
+      <div className="flex justify-center items-center gap-3 text-sm text-gray-300">
+        <div className="w-4 h-4 rounded-full bg-white/70 animate-pulse" />
+        {LOADING_MESSAGES_BY_PHASE.report[loadingMessageIndex]}
+      </div>
+    )}
+
+  </CardContent>
+</Card>
+
+            <div className="flex justify-center mt-10">
   <Button
     disabled={loadingPhase === "report"}
     onClick={async () => {
@@ -706,28 +784,31 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
         setLoadingPhase(null);
       }
     }}
-    className="bg-white text-gray-900 hover:bg-gray-100 px-8 p-3 text-base font-semibold rounded-xl shadow"
+    className="
+      block
+      w-full
+      sm:w-auto
+      text-center
+      bg-gradient-to-r
+      from-green-200
+      to-blue-200
+      text-gray-900
+      px-10
+      py-3
+      rounded-md
+      font-medium
+      hover:from-green-300
+      hover:to-blue-300
+      transition
+      disabled:opacity-60
+    "
   >
     {loadingPhase === "report"
       ? "Generating AI Report…"
       : "Generate AI Growth Report"}
   </Button>
-
-  {loadingPhase === "report" && (
-    <div className="flex items-center gap-3 text-sm text-gray-300">
-      <div className="w-4 h-4 rounded-full bg-white/70 animate-pulse" />
-      {LOADING_MESSAGES_BY_PHASE.report[loadingMessageIndex]}
-    </div>
-  )}
 </div>
 
-
-  
-
-</div>
-
-              </CardContent>
-            </Card>
 
 {report && (
   <>
