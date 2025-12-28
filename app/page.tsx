@@ -17,7 +17,7 @@ import Image from 'next/image';
 
 
 
-interface InstagramMetrics {
+interface SocialMetrics {
   posts_last_30_days: number;
   avg_posts_per_week: number;
   days_since_last_post: number;
@@ -25,14 +25,17 @@ interface InstagramMetrics {
   engagement_rate: number;
 }
 
+interface PlatformResult {
+  handle: string;
+  metrics: SocialMetrics;
+  grade: string;
+  score: number;
+  urgency: string[];
+}
+
 interface GradeResponse {
-  instagram: {
-    handle: string;
-    metrics: InstagramMetrics;
-    grade: string;
-    score: number;
-    urgency: string[];
-  };
+  instagram?: PlatformResult;
+  facebook?: PlatformResult;
 }
 
 interface DiscoverResponse {
@@ -88,7 +91,7 @@ const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>(null);
 const gradeLoaderRef = useRef<HTMLDivElement>(null);
 
 
-const SUPPORTED_GRADING_PLATFORMS: SocialPlatform[] = ["instagram"];
+const SUPPORTED_GRADING_PLATFORMS: SocialPlatform[] = ["instagram", "facebook"];
 const hasSupportedSocialReady =
   socials &&
   SUPPORTED_GRADING_PLATFORMS.some(
@@ -195,52 +198,76 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
   
   
 
-  const handleGradeProfile = async (platform: SocialPlatform) => {
-    if (!SUPPORTED_GRADING_PLATFORMS.includes(platform)) {
-      setError(`${platform} is coming soon. Please use Instagram`);
-      return;
-    }
-  
+  const handleGradeProfile = async (platforms?: SocialPlatform[]) => {
+    const platformsToGrade = platforms || (selectedPlatform ? [selectedPlatform] : []);
+
+    if (platformsToGrade.length === 0) return;
+
     setLoadingPhase("grade");
     setError("");
     setResult(null);
-    setSelectedPlatform(platform);
-  
+
     try {
-      let url: string;
+      const gradeResults: GradeResponse = {};
+
+      for (const platform of platformsToGrade) {
+        if (!SUPPORTED_GRADING_PLATFORMS.includes(platform)) continue;
+
+        try {
+          let url: string;
 
           if (socials && socials[platform]?.length) {
             url = socials[platform][0];
           } else {
-            const normalizedUsername = normalizeInstagramUsername(socialUsername);
-            url = `https://www.instagram.com/${normalizedUsername}`;
+            if (platform === "instagram") {
+              const normalizedUsername = normalizeInstagramUsername(socialUsername);
+              url = `https://www.instagram.com/${normalizedUsername}`;
+            } else if (platform === "facebook") {
+              const normalizedUsername = normalizeFacebookUsername(socialUsername);
+              url = `https://www.facebook.com/${normalizedUsername}`;
+            } else {
+              continue;
+            }
           }
 
-  
-      const response = await fetchWithTimeout(
-        `${API_BASE_URL}/grade`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ input: url }),
-        },
-        40_000 // 15 seconds
-      );
-  
-      if (!response.ok) {
-        throw new Error("SERVER_ERROR");
+          const response = await fetchWithTimeout(
+            `${API_BASE_URL}/grade`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                input: url,
+                platform: platform
+              }),
+            },
+            40_000
+          );
+
+          if (response.ok) {
+            const data = await response.json();
+            if (platform === "instagram" && data.instagram) {
+              gradeResults.instagram = data.instagram;
+            } else if (platform === "facebook" && data.facebook) {
+              gradeResults.facebook = data.facebook;
+            }
+          }
+        } catch (err) {
+          console.error(`Error grading ${platform}:`, err);
+        }
       }
-  
-      const data = await response.json();
-      setResult(data);
-  
+
+      if (Object.keys(gradeResults).length > 0) {
+        setResult(gradeResults);
+      } else {
+        throw new Error("NO_RESULTS");
+      }
+
     } catch (err: any) {
-      if (err.message === "INVALID_INSTAGRAM_USERNAME") {
-        setError("Please enter a valid Instagram username.");
-      }
-      if (err.name === "AbortError") {
+      if (err.message === "INVALID_INSTAGRAM_USERNAME" || err.message === "INVALID_FACEBOOK_USERNAME") {
+        setError("Please enter a valid username.");
+      } else if (err.name === "AbortError") {
         setError(
-          "Taking longer than expected. Please ensure the username is public and try again."
+          "Taking longer than expected. Please ensure the profile is public and try again."
         );
       } else {
         setError("Please check the username and try again.");
@@ -252,19 +279,19 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
   
   const normalizeInstagramUsername = (input: string) => {
     let value = input.trim();
-  
+
     // Remove leading @
     if (value.startsWith("@")) {
       value = value.slice(1);
     }
-  
+
     // If user pasted full URL, extract username
     try {
       if (value.includes("instagram.com")) {
         const url = new URL(
           value.startsWith("http") ? value : `https://${value}`
         );
-  
+
         // pathname like "/username/" → ["", "username"]
         const parts = url.pathname.split("/").filter(Boolean);
         value = parts[0] || "";
@@ -272,12 +299,43 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
     } catch {
       // ignore URL parsing errors
     }
-  
+
     // Final validation (Instagram usernames: letters, numbers, periods, underscores)
     if (!/^[a-zA-Z0-9._]{1,30}$/.test(value)) {
       throw new Error("INVALID_INSTAGRAM_USERNAME");
     }
-  
+
+    return value;
+  };
+
+  const normalizeFacebookUsername = (input: string) => {
+    let value = input.trim();
+
+    // Remove leading @
+    if (value.startsWith("@")) {
+      value = value.slice(1);
+    }
+
+    // If user pasted full URL, extract username
+    try {
+      if (value.includes("facebook.com")) {
+        const url = new URL(
+          value.startsWith("http") ? value : `https://${value}`
+        );
+
+        // pathname like "/username/" → ["", "username"]
+        const parts = url.pathname.split("/").filter(Boolean);
+        value = parts[0] || "";
+      }
+    } catch {
+      // ignore URL parsing errors
+    }
+
+    // Final validation (Facebook usernames: letters, numbers, periods)
+    if (!/^[a-zA-Z0-9.]{1,50}$/.test(value)) {
+      throw new Error("INVALID_FACEBOOK_USERNAME");
+    }
+
     return value;
   };
   
@@ -492,7 +550,12 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
     {/* CTA BUTTON */}
     {hasSupportedSocialReady ? (
   <Button
-    onClick={() => handleGradeProfile("instagram")}
+    onClick={() => {
+      const availablePlatforms = SUPPORTED_GRADING_PLATFORMS.filter(
+        (platform) => socials && socials[platform]?.length > 0
+      );
+      handleGradeProfile(availablePlatforms);
+    }}
     className="w-full sm:w-auto px-6 sm:px-8 py-3 text-sm sm:text-base font-semibold bg-gray-900 text-white hover:bg-gray-800"
   >
     Generate Report
@@ -501,7 +564,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
   <div className="max-w-xl mx-auto mt-4">
     <p className="text-sm text-gray-600 mb-4">
       We found social profiles, but none are supported for analysis yet.
-      Currently, only Instagram reports are available.
+      Currently, only Instagram and Facebook reports are available.
     </p>
 
     <Button
@@ -512,7 +575,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
         setSocialUsername("");
       }}
     >
-      Enter Instagram Username Manually
+      Enter Social Username Manually
     </Button>
 
   </div>
@@ -569,7 +632,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          handleGradeProfile(socialPlatform);
+          setSelectedPlatform(socialPlatform);
+          handleGradeProfile([socialPlatform]);
         }}
         className="flex gap-3 max-w-xl mx-auto"
       >
@@ -633,9 +697,11 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
 
 
-        {result && selectedPlatform && (
-          <div className="max-w-4xl mx-auto mt-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-<Card className="bg-gradient-to-br from-gray-900 to-green-900 text-white border-none shadow-2xl">
+        {result && (result.instagram || result.facebook) && (
+          <div className="max-w-4xl mx-auto mt-12 animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
+
+            {result.instagram && (
+<Card className="bg-gradient-to-br from-gray-900 to-pink-900 text-white border-none shadow-2xl">
   <CardContent className="p-6 sm:p-8">
 
     {/* ===== HEADER (PROFILE + GRADE) ===== */}
@@ -643,8 +709,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
       {/* PROFILE INFO */}
       <div>
-        <p className="text-green-200 text-sm font-medium mb-1">
-          {selectedPlatform.toUpperCase()} PROFILE
+        <p className="text-pink-200 text-sm font-medium mb-1">
+          INSTAGRAM PROFILE
         </p>
         <h3 className="text-2xl sm:text-3xl font-bold break-all">
           @{result.instagram.handle}
@@ -653,7 +719,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
       {/* GRADE INFO */}
       <div className="flex flex-col items-center sm:items-end">
-        <p className="text-green-200 text-sm font-medium mb-1">
+        <p className="text-pink-200 text-sm font-medium mb-1">
           OVERALL GRADE
         </p>
         <div className="flex items-baseline gap-2">
@@ -677,8 +743,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       {/* POSTS */}
       <div className="bg-white/10 backdrop-blur rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2">
-          <Calendar className="w-4 h-4 text-green-300" />
-          <p className="text-xs text-green-200 font-medium">POSTS (30d)</p>
+          <Calendar className="w-4 h-4 text-pink-300" />
+          <p className="text-xs text-pink-200 font-medium">POSTS (30d)</p>
         </div>
         <p className="text-base sm:text-lg lg:text-2xl font-bold">
           {result.instagram.metrics.posts_last_30_days}
@@ -688,8 +754,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       {/* AVG/WEEK */}
       <div className="bg-white/10 backdrop-blur rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2">
-          <TrendingUp className="w-4 h-4 text-green-300" />
-          <p className="text-xs text-green-200 font-medium">AVG / WEEK</p>
+          <TrendingUp className="w-4 h-4 text-pink-300" />
+          <p className="text-xs text-pink-200 font-medium">AVG / WEEK</p>
         </div>
         <p className="text-base sm:text-lg lg:text-2xl font-bold">
           {result.instagram.metrics.avg_posts_per_week}x
@@ -699,8 +765,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       {/* LAST POST */}
       <div className="bg-white/10 backdrop-blur rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2">
-          <Target className="w-4 h-4 text-green-300" />
-          <p className="text-xs text-green-200 font-medium">LAST POST</p>
+          <Target className="w-4 h-4 text-pink-300" />
+          <p className="text-xs text-pink-200 font-medium">LAST POST</p>
         </div>
         <p className="text-base sm:text-lg lg:text-2xl font-bold">
           {result.instagram.metrics.days_since_last_post}d
@@ -710,8 +776,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       {/* FOLLOWERS */}
       <div className="bg-white/10 backdrop-blur rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2">
-          <Users className="w-4 h-4 text-green-300" />
-          <p className="text-xs text-green-200 font-medium">FOLLOWERS</p>
+          <Users className="w-4 h-4 text-pink-300" />
+          <p className="text-xs text-pink-200 font-medium">FOLLOWERS</p>
         </div>
         <p className="text-base sm:text-lg lg:text-2xl font-bold">
           {result.instagram.metrics.followers.toLocaleString()}
@@ -721,8 +787,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       {/* ENGAGEMENT */}
       <div className="bg-white/10 backdrop-blur rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2">
-          <Sparkles className="w-4 h-4 text-green-300" />
-          <p className="text-xs text-green-200 font-medium">ENGAGEMENT</p>
+          <Sparkles className="w-4 h-4 text-pink-300" />
+          <p className="text-xs text-pink-200 font-medium">ENGAGEMENT</p>
         </div>
         <p className="text-base sm:text-lg lg:text-2xl font-bold">
           {result.instagram.metrics.engagement_rate.toFixed(1)}%
@@ -732,7 +798,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
     {/* ===== RECOMMENDATIONS ===== */}
     {result.instagram.urgency?.length > 0 && (
-      <div className="bg-yellow-500/20 backdrop-blur rounded-xl p-6 border border-yellow-500/30 mb-6">
+      <div className="bg-yellow-500/20 backdrop-blur rounded-xl p-6 border border-yellow-500/30">
         <p className="text-yellow-200 text-sm font-medium mb-3">
           RECOMMENDATIONS
         </p>
@@ -746,16 +812,133 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       </div>
     )}
 
-    {/* ===== REPORT LOADING ===== */}
-    {loadingPhase === "report" && (
-      <div className="flex justify-center items-center gap-3 text-sm text-gray-300">
-        <div className="w-4 h-4 rounded-full bg-white/70 animate-pulse" />
-        {LOADING_MESSAGES_BY_PHASE.report[loadingMessageIndex]}
+  </CardContent>
+</Card>
+            )}
+
+            {result.facebook && (
+<Card className="bg-gradient-to-br from-gray-900 to-blue-900 text-white border-none shadow-2xl">
+  <CardContent className="p-6 sm:p-8">
+
+    {/* ===== HEADER (PROFILE + GRADE) ===== */}
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 mb-8 text-center sm:text-left">
+
+      {/* PROFILE INFO */}
+      <div>
+        <p className="text-blue-200 text-sm font-medium mb-1">
+          FACEBOOK PROFILE
+        </p>
+        <h3 className="text-2xl sm:text-3xl font-bold break-all">
+          @{result.facebook.handle}
+        </h3>
+      </div>
+
+      {/* GRADE INFO */}
+      <div className="flex flex-col items-center sm:items-end">
+        <p className="text-blue-200 text-sm font-medium mb-1">
+          OVERALL GRADE
+        </p>
+        <div className="flex items-baseline gap-2">
+          <span
+            className={`text-4xl sm:text-5xl lg:text-6xl font-bold leading-none ${getGradeColor(
+              result.facebook.grade
+            )}`}
+          >
+            {result.facebook.grade}
+          </span>
+          <span className="text-lg sm:text-2xl text-gray-300 leading-none">
+            {result.facebook.score}/100
+          </span>
+        </div>
+      </div>
+    </div>
+
+    {/* ===== METRICS GRID ===== */}
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-6 mb-8">
+
+      {/* POSTS */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Calendar className="w-4 h-4 text-blue-300" />
+          <p className="text-xs text-blue-200 font-medium">POSTS (30d)</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.facebook.metrics.posts_last_30_days}
+        </p>
+      </div>
+
+      {/* AVG/WEEK */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <TrendingUp className="w-4 h-4 text-blue-300" />
+          <p className="text-xs text-blue-200 font-medium">AVG / WEEK</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.facebook.metrics.avg_posts_per_week}x
+        </p>
+      </div>
+
+      {/* LAST POST */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Target className="w-4 h-4 text-blue-300" />
+          <p className="text-xs text-blue-200 font-medium">LAST POST</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.facebook.metrics.days_since_last_post}d
+        </p>
+      </div>
+
+      {/* FOLLOWERS */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Users className="w-4 h-4 text-blue-300" />
+          <p className="text-xs text-blue-200 font-medium">FOLLOWERS</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.facebook.metrics.followers.toLocaleString()}
+        </p>
+      </div>
+
+      {/* ENGAGEMENT */}
+      <div className="bg-white/10 backdrop-blur rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Sparkles className="w-4 h-4 text-blue-300" />
+          <p className="text-xs text-blue-200 font-medium">ENGAGEMENT</p>
+        </div>
+        <p className="text-base sm:text-lg lg:text-2xl font-bold">
+          {result.facebook.metrics.engagement_rate.toFixed(1)}%
+        </p>
+      </div>
+    </div>
+
+    {/* ===== RECOMMENDATIONS ===== */}
+    {result.facebook.urgency?.length > 0 && (
+      <div className="bg-yellow-500/20 backdrop-blur rounded-xl p-6 border border-yellow-500/30">
+        <p className="text-yellow-200 text-sm font-medium mb-3">
+          RECOMMENDATIONS
+        </p>
+        <div className="space-y-2">
+          {result.facebook.urgency.map((item, index) => (
+            <p key={index} className="text-white text-sm sm:text-base">
+              {item}
+            </p>
+          ))}
+        </div>
       </div>
     )}
 
   </CardContent>
 </Card>
+            )}
+
+    {/* ===== REPORT LOADING ===== */}
+    {loadingPhase === "report" && (
+      <div className="flex justify-center items-center gap-3 text-sm text-gray-600 mt-8">
+        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-green-200 to-blue-200 animate-pulse" />
+        {LOADING_MESSAGES_BY_PHASE.report[loadingMessageIndex]}
+      </div>
+    )}
 
             <div className="flex justify-center mt-10">
   <Button
@@ -765,17 +948,32 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
       setReport(null);
 
       try {
+        const platformsData: any = {};
+
+        if (result?.instagram) {
+          platformsData.instagram = {
+            handle: result.instagram.handle,
+            metrics: result.instagram.metrics,
+            grade: result.instagram.grade,
+            score: result.instagram.score,
+            urgency: result.instagram.urgency,
+          };
+        }
+
+        if (result?.facebook) {
+          platformsData.facebook = {
+            handle: result.facebook.handle,
+            metrics: result.facebook.metrics,
+            grade: result.facebook.grade,
+            score: result.facebook.score,
+            urgency: result.facebook.urgency,
+          };
+        }
+
         const response = await fetch(`${API_BASE_URL}/generate-report`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            platform: selectedPlatform,
-            handle: result!.instagram.handle,
-            metrics: result!.instagram.metrics,
-            grade: result!.instagram.grade,
-            score: result!.instagram.score,
-            urgency: result!.instagram.urgency,
-          }),
+          body: JSON.stringify(platformsData),
         });
 
         const data = await response.json();
@@ -839,9 +1037,10 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 
     const { downloadHtmlAsPdf } = await import("@/lib/htmlToPdf");
 
+    const handle = result?.instagram?.handle || result?.facebook?.handle || 'report';
     downloadHtmlAsPdf(
       reportRef.current,
-      `omada-ai-report-${result?.instagram.handle}.pdf`
+      `omada-ai-report-${handle}.pdf`
     );
   }}
 >
