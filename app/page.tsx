@@ -452,7 +452,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
           </p>
 
           <p className="hidden sm:block text-sm sm:text-base text-gray-400 max-w-2xl mx-auto mb-8 sm:mb-12">
-          Instantly analyze your social media and get an AI growth report
+          Instantly analyze your social media and get an AI growth report!
           </p>
 
 <div className="bg-gradient-to-br from-gray-50 to-green-50 rounded-2xl p-8 shadow-sm border border-gray-100">
